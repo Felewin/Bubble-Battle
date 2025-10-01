@@ -321,7 +321,8 @@ function createShipExplosionDebris(x, y, shipOwner) {
       vy: Math.sin(angle) * speed,
       color: color,
       size: 1 + Math.random() * 1.5, // 1-2.5px (much smaller)
-      lifetime: 0.5, // 0.5 seconds (shorter lifetime)
+      maxLifetime: 0.5, // 0.5 seconds (shorter lifetime)
+      lifetime: 0.5,
       createdTime: Date.now()
     });
   }
@@ -335,7 +336,7 @@ function updateDebrisParticles(deltaTime) {
     
     // Calculate remaining lifetime
     const age = (Date.now() - particle.createdTime) / 1000;
-    particle.lifetime = 1.0 - age;
+    particle.lifetime = particle.maxLifetime - age;
     
     // Remove if lifetime expired
     return particle.lifetime > 0;
@@ -344,7 +345,8 @@ function updateDebrisParticles(deltaTime) {
 
 function drawDebrisParticles() {
   debrisParticles.forEach(particle => {
-    const opacity = particle.lifetime; // Fade out as lifetime decreases
+    // Normalize opacity based on remaining lifetime (0 to 1)
+    const opacity = Math.max(0, Math.min(1, particle.lifetime / particle.maxLifetime));
     
     gameCtx.fillStyle = `rgba(${particle.color.r}, ${particle.color.g}, ${particle.color.b}, ${opacity})`;
     gameCtx.beginPath();
