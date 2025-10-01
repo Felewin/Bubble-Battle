@@ -823,10 +823,10 @@ function drawArrow() {
       arrowColor = 'rgba(0, 100, 255, 0.7)';
       showNumbers = false;
     } else if (isDraggingRightClick) {
-      // Right click (50%): Yellow
+      // Right click (100% - 1): Yellow
       arrowColor = 'rgba(255, 255, 0, 0.7)';
-      microBubblesToSend = Math.floor(dragStartBubble.microBubbles / 2);
-      displayFormula = '50%';
+      microBubblesToSend = Math.max(0, dragStartBubble.microBubbles - 1);
+      displayFormula = '100% - 1';
     } else {
       // Left click: smart send - always keep 1 at home
       if (hoveredBubble && hoveredBubble !== dragStartBubble) {
@@ -1211,8 +1211,8 @@ document.addEventListener('mouseup', (e) => {
         isDraggingMiddleClick = false;
         return;
       } else if (isDraggingRightClick) {
-        // Right click: send 50%
-        amountToSend = Math.floor(dragStartBubble.microBubbles / 2);
+        // Right click: send 100% - 1
+        amountToSend = Math.max(0, dragStartBubble.microBubbles - 1);
       } else {
         // Left click: smart send (target + bonus, keep 1 at home)
         const maxWeCanSend = dragStartBubble.microBubbles - 1;
