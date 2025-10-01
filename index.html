@@ -57,7 +57,7 @@
     cursor: pointer;
   }
   .bubble.player1:hover {
-    transform: scale(1.1);
+    transform: scale(1.02);
     opacity: 1;
   }
   .player1 { background: radial-gradient(circle at 30% 30%, #7fff7f, #00a000); }
@@ -121,14 +121,15 @@
 <canvas id="uiCanvas"></canvas>
 <audio id="sendSound" src="bubble_release.wav"></audio>
 <audio id="captureSound" src="bubble_pop.wav"></audio>
-<div id="startScreen">
+<div id="startScreen" style="display: none;">
   <h1 id="gameTitle">Bubble Battle</h1>
   <div id="controlsExplanation">
     <p>Controls:</p>
     <p>Left Click Drag, Middle Click Drag, Right Click Drag</p>
     <p>Capture enemy (pink) and neutral (blue) bubbles to expand your aquatic empire!</p>
+    <p>Press ESC to close this menu</p>
   </div>
-  <button id="startGameButton" class="gameButton">Start Game</button>
+  <button id="startGameButton" class="gameButton">Resume Game</button>
 </div>
 <div id="victoryScreen" style="display: none;">
   <div id="victoryMessage">Victory!</div>
@@ -161,8 +162,9 @@ let plankton = [];
 let isDraggingRightClick = false;
 let isDraggingMiddleClick = false;
 let gameState = [];
-let gameStarted = false;
+let gameStarted = true;
 let startScreenBubbles = [];
+let hoveredBubble = null;
 
 const SHIP_SPEED = 75; // pixels per second (doubled from 37.5)
 const SHIP_RADIUS = 3; // Radius of the ship (half of its width)
@@ -378,6 +380,75 @@ function drawPlankton() {
   });
 }
 
+function drawSquadronLines() {
+  // Draw glowing lines for each squadron in transit
+  // Group microBubbles by unique routes to draw one line per squadron
+  const routes = new Map();
+  
+  microBubbles.forEach(mb => {
+    const key = `${mb.fromX},${mb.fromY}-${mb.toX},${mb.toY}-${mb.owner}`;
+    if (!routes.has(key)) {
+      routes.set(key, { fromX: mb.fromX, fromY: mb.fromY, toX: mb.toX, toY: mb.toY, owner: mb.owner });
+    }
+  });
+  
+  routes.forEach(route => {
+    const color = route.owner === 'player1' ? '0, 160, 0' : '199, 21, 133'; // Green for player1, pink for player2
+    
+    // Find the source and target bubbles to get their radii
+    const sourceBubble = bubbles.find(b => {
+      const centerX = parseInt(b.style.left) + parseInt(b.style.width) / 2;
+      const centerY = parseInt(b.style.top) + parseInt(b.style.height) / 2;
+      return Math.abs(centerX - route.fromX) < 1 && Math.abs(centerY - route.fromY) < 1;
+    });
+    
+    const targetBubble = bubbles.find(b => {
+      const centerX = parseInt(b.style.left) + parseInt(b.style.width) / 2;
+      const centerY = parseInt(b.style.top) + parseInt(b.style.height) / 2;
+      return Math.abs(centerX - route.toX) < 1 && Math.abs(centerY - route.toY) < 1;
+    });
+    
+    if (!sourceBubble || !targetBubble) return;
+    
+    const sourceRadius = parseInt(sourceBubble.style.width) / 2;
+    const targetRadius = parseInt(targetBubble.style.width) / 2;
+    
+    // Calculate direction vector
+    const dx = route.toX - route.fromX;
+    const dy = route.toY - route.fromY;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    
+    if (distance === 0) return;
+    
+    // Normalize direction vector
+    const ndx = dx / distance;
+    const ndy = dy / distance;
+    
+    // Calculate edge points
+    const startX = route.fromX + ndx * sourceRadius;
+    const startY = route.fromY + ndy * sourceRadius;
+    const endX = route.toX - ndx * targetRadius;
+    const endY = route.toY - ndy * targetRadius;
+    
+    gameCtx.beginPath();
+    gameCtx.moveTo(startX, startY);
+    gameCtx.lineTo(endX, endY);
+    
+    // Outer glow
+    gameCtx.strokeStyle = `rgba(${color}, 0.1)`;
+    gameCtx.lineWidth = 8;
+    gameCtx.stroke();
+    
+    // Inner line
+    gameCtx.beginPath();
+    gameCtx.moveTo(startX, startY);
+    gameCtx.lineTo(endX, endY);
+    gameCtx.strokeStyle = `rgba(${color}, 0.3)`;
+    gameCtx.lineWidth = 2;
+    gameCtx.stroke();
+  });
+}
+
 function drawArrow() {
   uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
   
@@ -396,10 +467,57 @@ function drawArrow() {
     const endX = dragEndPos.x;
     const endY = dragEndPos.y;
     
+    // Find bubble under mouse cursor
+    hoveredBubble = bubbles.find(bubble => {
+      const rect = bubble.getBoundingClientRect();
+      return dragEndPos.x >= rect.left && dragEndPos.x <= rect.right &&
+             dragEndPos.y >= rect.top && dragEndPos.y <= rect.bottom;
+    });
+    
+    // Determine arrow color based on drag type and conditions
+    let arrowColor;
+    let microBubblesToSend;
+    let showNumbers = true;
+    let displayFormula = '';
+    
+    if (isDraggingMiddleClick) {
+      // Middle click: Blue
+      arrowColor = 'rgba(0, 100, 255, 0.7)';
+      microBubblesToSend = dragStartBubble.microBubbles >= 1 ? 1 : 0;
+    } else if (isDraggingRightClick) {
+      // Right click (50%): Yellow
+      arrowColor = 'rgba(255, 255, 0, 0.7)';
+      microBubblesToSend = Math.floor(dragStartBubble.microBubbles / 2);
+      displayFormula = '50%';
+    } else {
+      // Left click: smart send - always keep 1 at home
+      if (hoveredBubble && hoveredBubble !== dragStartBubble) {
+        const targetShips = hoveredBubble.microBubbles;
+        const maxWeCanSend = dragStartBubble.microBubbles - 1;
+        
+        if (maxWeCanSend > targetShips) {
+          // We can send target + extra
+          const idealSend = targetShips + 5;
+          microBubblesToSend = Math.min(maxWeCanSend, idealSend);
+          const bonus = microBubblesToSend - targetShips;
+          displayFormula = `${targetShips} + ${bonus}`;
+          arrowColor = microBubblesToSend >= targetShips + 5 ? 'rgba(0, 255, 0, 0.7)' : 'rgba(255, 0, 0, 0.7)';
+        } else {
+          // We can't beat them, send everything - 1
+          microBubblesToSend = Math.max(0, maxWeCanSend);
+          displayFormula = '100% - 1';
+          arrowColor = 'rgba(255, 0, 0, 0.7)';
+        }
+      } else {
+        showNumbers = false;
+        arrowColor = 'rgba(255, 255, 255, 0.5)';
+      }
+    }
+    
     uiCtx.beginPath();
     uiCtx.moveTo(startX, startY);
     uiCtx.lineTo(endX, endY);
-    uiCtx.strokeStyle = isDraggingRightClick ? 'rgba(255, 0, 0, 0.5)' : (isDraggingMiddleClick ? 'rgba(255, 255, 0, 0.5)' :'rgba(255, 255, 255, 0.5)');
+    uiCtx.strokeStyle = arrowColor;
     uiCtx.lineWidth = 2;
     uiCtx.stroke();
     
@@ -409,23 +527,22 @@ function drawArrow() {
     uiCtx.lineTo(endX- 15 * Math.cos(angle - Math.PI / 6), endY - 15 * Math.sin(angle - Math.PI / 6));
     uiCtx.lineTo(endX - 15 * Math.cos(angle + Math.PI / 6), endY - 15 * Math.sin(angle + Math.PI / 6));
     uiCtx.closePath();
-    uiCtx.fillStyle = isDraggingRightClick ? 'rgba(255, 0, 0, 0.5)' : (isDraggingMiddleClick ? 'rgba(255, 255, 0, 0.5)' : 'rgba(255, 255, 255, 0.5)');
+    uiCtx.fillStyle = arrowColor;
     uiCtx.fill();
 
-    let microBubblesToSend;
-    if (isDraggingMiddleClick) {
-      microBubblesToSend = dragStartBubble.microBubbles >= 1 ? 1 : 0;
-    } else if (isDraggingRightClick) {
-      microBubblesToSend = dragStartBubble.microBubbles;
-    } else {
-      microBubblesToSend = Math.floor(dragStartBubble.microBubbles / 2);
+    if (showNumbers) {
+      uiCtx.font = '16px Arial';
+      uiCtx.fillStyle = 'white';
+      uiCtx.textAlign = 'center';
+      uiCtx.textBaseline = 'middle';
+      
+      // Show formula above the number
+      if (displayFormula) {
+        uiCtx.fillText(displayFormula, (startX + endX) / 2, (startY + endY) / 2 - 20);
+      }
+      
+      uiCtx.fillText(microBubblesToSend.toString(), (startX + endX) / 2, (startY + endY) / 2);
     }
-
-    uiCtx.font = '16px Arial';
-    uiCtx.fillStyle = 'white';
-    uiCtx.textAlign = 'center';
-    uiCtx.textBaseline = 'middle';
-    uiCtx.fillText(microBubblesToSend.toString(), (startX + endX) / 2, (startY + endY) / 2);
   }
 }
 
@@ -435,6 +552,7 @@ function gameLoop() {
   } else {
     drawBackground();
     drawPlankton();
+    drawSquadronLines();
     drawArrow();
     updateMicroBubbles();
     updateBubbles();
@@ -590,6 +708,24 @@ function initializeGame(restartSameMap = false) {
     }));
   }
 
+  // Ensure player doesn't start with less than more than one enemy
+  const playerBubble = bubbles.find(b => b.className.includes('player1'));
+  const enemyBubbles = bubbles.filter(b => b.className.includes('player2'));
+  
+  if (playerBubble && enemyBubbles.length > 0) {
+    // Sort enemies by ship count descending
+    const sortedEnemies = enemyBubbles.sort((a, b) => b.microBubbles - a.microBubbles);
+    
+    // Count how many enemies have more ships than player
+    const strongerEnemies = sortedEnemies.filter(e => e.microBubbles > playerBubble.microBubbles);
+    
+    // If more than one enemy is stronger, boost player to match the second strongest
+    if (strongerEnemies.length > 1) {
+      playerBubble.microBubbles = strongerEnemies[1].microBubbles;
+      playerBubble.innerHTML = playerBubble.microBubbles;
+    }
+  }
+
   createPlankton();
 }
 
@@ -642,6 +778,18 @@ document.addEventListener('auxclick', (e) => {
   }
 });
 
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (startScreen.style.display === 'none') {
+      startScreen.style.display = 'flex';
+      gameStarted = false;
+    } else {
+      startScreen.style.display = 'none';
+      gameStarted = true;
+    }
+  }
+});
+
 window.addEventListener('resize', () => {
   backgroundCanvas.width = gameCanvas.width = uiCanvas.width = window.innerWidth;
   backgroundCanvas.height = gameCanvas.height = uiCanvas.height = window.innerHeight;
@@ -660,10 +808,10 @@ restartButton.addEventListener('click', () => {
 startGameButton.addEventListener('click', () => {
   startScreen.style.display = 'none';
   gameStarted = true;
-  initializeGame(false);
 });
 
 createStartScreenBubbles();
+initializeGame(false);
 gameLoop();
 </script>
 </body></html>
