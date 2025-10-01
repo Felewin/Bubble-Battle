@@ -749,9 +749,9 @@ function drawArrow() {
         const isOwnPlanet = hoveredBubble.className.includes('player1');
         
         if (isOwnPlanet) {
-          // Sending to own planet: always 100% - 1
-          microBubblesToSend = maxWeCanSend;
-          displayFormula = '100% - 1';
+          // Sending to own planet: send 50%
+          microBubblesToSend = Math.floor(dragStartBubble.microBubbles / 2);
+          displayFormula = '50%';
           arrowColor = 'rgba(0, 255, 0, 0.7)';
         } else {
           const targetShips = hoveredBubble.microBubbles;
@@ -1116,8 +1116,8 @@ document.addEventListener('mouseup', (e) => {
         const isOwnPlanet = endBubble.className.includes('player1');
         
         if (isOwnPlanet) {
-          // Sending to own planet: always 100% - 1
-          amountToSend = maxWeCanSend;
+          // Sending to own planet: send 50%
+          amountToSend = Math.floor(dragStartBubble.microBubbles / 2);
         } else {
           const targetShips = endBubble.microBubbles;
           const isNeutral = endBubble.className.includes('neutral');
