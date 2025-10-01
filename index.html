@@ -184,6 +184,8 @@ function createBubble(x, y, size, owner, microBubbles) {
   bubble.isReleasing = false;
   bubble.releasingCount = 0;
   bubble.lastReleasedShipTime = 0;
+  bubble.vassalTo = null; // Track if this planet is a vassal to another
+  bubble.lastVassalSend = 0; // Track last time vassal sent a ship
   
   // Create count display element
   const countDisplay = document.createElement('div');
@@ -348,7 +350,18 @@ function updateMicroBubbles() {
         microBubble.target.microBubbles -= 1;
         if (microBubble.target.microBubbles <= 0) {
           microBubble.target.microBubbles = 1;
+          const oldOwner = microBubble.target.className.split(' ')[1];
           microBubble.target.className = `bubble ${microBubble.owner}`;
+          
+          // Clear vassal relationships when ownership changes
+          microBubble.target.vassalTo = null;
+          // Also clear if this planet was anyone's master
+          bubbles.forEach(b => {
+            if (b.vassalTo === microBubble.target) {
+              b.vassalTo = null;
+            }
+          });
+          
           captureSound.play();
         }
       }
@@ -369,6 +382,24 @@ function updateBubbles() {
         bubble.microBubbles += 1;
         bubble.countDisplay.textContent = bubble.microBubbles;
         bubble.lastGrowth = now;
+      }
+    }
+    
+    // Handle vassal behavior
+    if (bubble.vassalTo && bubble.microBubbles > 1 && !bubble.isReleasing) {
+      // Check if vassal is still valid (both planets exist, both owned by player, and master is still player1)
+      if (bubbles.includes(bubble.vassalTo) && 
+          bubble.className.includes('player1') && 
+          bubble.vassalTo.className.includes('player1')) {
+        // Send one ship at a time, keeping 1 at home
+        const timeSinceLastSend = now - bubble.lastVassalSend;
+        if (timeSinceLastSend >= SHIP_RELEASE_DELAY) {
+          sendMicroBubbles(bubble, bubble.vassalTo, false, false, 1);
+          bubble.lastVassalSend = now;
+        }
+      } else {
+        // Clear invalid vassal relationship
+        bubble.vassalTo = null;
       }
     }
   });
@@ -401,6 +432,55 @@ function createPlankton() {
       angle: Math.random() * Math.PI * 2
     });
   }
+}
+
+function drawVassalLines() {
+  const time = Date.now() / 1000; // Time in seconds for animation
+  
+  bubbles.forEach(bubble => {
+    if (bubble.vassalTo && bubbles.includes(bubble.vassalTo)) {
+      const vassalX = parseInt(bubble.style.left) + parseInt(bubble.style.width) / 2;
+      const vassalY = parseInt(bubble.style.top) + parseInt(bubble.style.height) / 2;
+      const masterX = parseInt(bubble.vassalTo.style.left) + parseInt(bubble.vassalTo.style.width) / 2;
+      const masterY = parseInt(bubble.vassalTo.style.top) + parseInt(bubble.vassalTo.style.height) / 2;
+      
+      // Calculate distance and direction
+      const dx = masterX - vassalX;
+      const dy = masterY - vassalY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance === 0) return;
+      
+      // Draw animated sine wave
+      gameCtx.beginPath();
+      gameCtx.strokeStyle = 'rgba(100, 150, 255, 0.6)';
+      gameCtx.lineWidth = 2;
+      
+      const segments = 50;
+      for (let i = 0; i <= segments; i++) {
+        const t = i / segments;
+        const x = vassalX + dx * t;
+        const y = vassalY + dy * t;
+        
+        // Calculate perpendicular offset for sine wave
+        const perpX = -dy / distance;
+        const perpY = dx / distance;
+        
+        // Animate the sine wave by subtracting time offset (flows from vassal to master)
+        const waveOffset = Math.sin(t * Math.PI * 4 - time * 3) * 10;
+        const finalX = x + perpX * waveOffset;
+        const finalY = y + perpY * waveOffset;
+        
+        if (i === 0) {
+          gameCtx.moveTo(finalX, finalY);
+        } else {
+          gameCtx.lineTo(finalX, finalY);
+        }
+      }
+      
+      gameCtx.stroke();
+    }
+  });
 }
 
 function drawPlankton() {
@@ -500,7 +580,8 @@ function drawSquadronCounts() {
     const shipsToLaunch = Math.min(...ships.map(s => s.remainingToLaunch));
     const totalCount = shipsInTransit + shipsToLaunch;
     
-    if (totalCount === 0) return;
+    // Skip singleton squadrons (1 ship total) - don't show label
+    if (totalCount <= 1) return;
     
     // Find the leading bubble (furthest along in progress)
     let leadingShip = ships[0];
@@ -738,10 +819,9 @@ function drawArrow() {
     let displayFormula = '';
     
     if (isDraggingMiddleClick) {
-      // Middle click: Blue - send 100% - 1
+      // Middle click: Blue - establishing vassal relationship (no numbers shown)
       arrowColor = 'rgba(0, 100, 255, 0.7)';
-      microBubblesToSend = Math.max(0, dragStartBubble.microBubbles - 1);
-      displayFormula = '100% - 1';
+      showNumbers = false;
     } else if (isDraggingRightClick) {
       // Right click (50%): Yellow
       arrowColor = 'rgba(255, 255, 0, 0.7)';
@@ -879,6 +959,7 @@ function gameLoop() {
   } else {
     drawBackground();
     drawPlankton();
+    drawVassalLines();
     drawSquadronLines();
     drawSquadronCounts();
     drawArrow();
@@ -1105,13 +1186,30 @@ document.addEventListener('mouseup', (e) => {
              e.clientY >= rect.top && e.clientY <= rect.bottom;
     });
 
-    if (endBubble && endBubble !== dragStartBubble) {
+      if (endBubble && endBubble !== dragStartBubble) {
       // Calculate the amount to send based on drag type
       let amountToSend = null;
       
       if (isDraggingMiddleClick) {
-        // Middle click: send 1
-        amountToSend = 1;
+        // Middle click: establish vassal relationship
+        // Determine which is smaller
+        const startSize = parseInt(dragStartBubble.style.width);
+        const endSize = parseInt(endBubble.style.width);
+        
+        if (startSize < endSize) {
+          // Start planet becomes vassal to end planet
+          dragStartBubble.vassalTo = endBubble;
+        } else {
+          // End planet becomes vassal to start planet
+          endBubble.vassalTo = dragStartBubble;
+        }
+        
+        // Don't send ships immediately for middle click
+        dragStartBubble = null;
+        dragEndPos = null;
+        isDraggingRightClick = false;
+        isDraggingMiddleClick = false;
+        return;
       } else if (isDraggingRightClick) {
         // Right click: send 50%
         amountToSend = Math.floor(dragStartBubble.microBubbles / 2);
