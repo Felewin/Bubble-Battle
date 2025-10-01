@@ -186,14 +186,31 @@ function createBubble(x, y, size, owner, microBubbles) {
   bubble.lastReleasedShipTime = 0;
   bubble.vassalTo = null; // Track if this planet is a vassal to another
   bubble.lastVassalSend = 0; // Track last time vassal sent a ship
+  bubble.vassalMinimum = 1; // Minimum ships to keep before sending to master
+  
+  // Create wrapper for count displays to stack them vertically
+  const countWrapper = document.createElement('div');
+  countWrapper.style.display = 'flex';
+  countWrapper.style.flexDirection = 'column';
+  countWrapper.style.alignItems = 'center';
+  countWrapper.style.position = 'relative';
+  countWrapper.style.zIndex = '1';
+  bubble.appendChild(countWrapper);
   
   // Create count display element
   const countDisplay = document.createElement('div');
   countDisplay.textContent = bubble.microBubbles;
-  countDisplay.style.position = 'relative';
-  countDisplay.style.zIndex = '1';
-  bubble.appendChild(countDisplay);
+  countWrapper.appendChild(countDisplay);
   bubble.countDisplay = countDisplay;
+  
+  // Create vassal minimum display element
+  const vassalMinDisplay = document.createElement('div');
+  vassalMinDisplay.style.fontSize = '0.7em';
+  vassalMinDisplay.style.color = 'rgb(100, 150, 255)';
+  vassalMinDisplay.style.marginTop = '2px';
+  vassalMinDisplay.style.display = 'none';
+  countWrapper.appendChild(vassalMinDisplay);
+  bubble.vassalMinDisplay = vassalMinDisplay;
   
   // Create overlay element for showing required ships
   const overlay = document.createElement('div');
@@ -355,10 +372,12 @@ function updateMicroBubbles() {
           
           // Clear vassal relationships when ownership changes
           microBubble.target.vassalTo = null;
+          microBubble.target.vassalMinimum = 1;
           // Also clear if this planet was anyone's master
           bubbles.forEach(b => {
             if (b.vassalTo === microBubble.target) {
               b.vassalTo = null;
+              b.vassalMinimum = 1;
             }
           });
           
@@ -385,13 +404,21 @@ function updateBubbles() {
       }
     }
     
+    // Update vassal minimum display
+    if (bubble.vassalTo && bubbles.includes(bubble.vassalTo)) {
+      bubble.vassalMinDisplay.style.display = 'block';
+      bubble.vassalMinDisplay.textContent = `(${bubble.vassalMinimum})`;
+    } else {
+      bubble.vassalMinDisplay.style.display = 'none';
+    }
+    
     // Handle vassal behavior
-    if (bubble.vassalTo && bubble.microBubbles > 1 && !bubble.isReleasing) {
+    if (bubble.vassalTo && bubble.microBubbles > bubble.vassalMinimum && !bubble.isReleasing) {
       // Check if vassal is still valid (both planets exist, both owned by player, and master is still player1)
       if (bubbles.includes(bubble.vassalTo) && 
           bubble.className.includes('player1') && 
           bubble.vassalTo.className.includes('player1')) {
-        // Send one ship at a time, keeping 1 at home
+        // Send one ship at a time, keeping vassalMinimum at home
         const timeSinceLastSend = now - bubble.lastVassalSend;
         if (timeSinceLastSend >= SHIP_RELEASE_DELAY) {
           sendMicroBubbles(bubble, bubble.vassalTo, false, false, 1);
@@ -400,6 +427,7 @@ function updateBubbles() {
       } else {
         // Clear invalid vassal relationship
         bubble.vassalTo = null;
+        bubble.vassalMinimum = 1;
       }
     }
   });
@@ -1275,6 +1303,28 @@ document.addEventListener('contextmenu', (e) => {
 document.addEventListener('auxclick', (e) => {
   if (e.button === 1) {
     e.preventDefault();
+  }
+});
+
+document.addEventListener('wheel', (e) => {
+  // Find bubble under mouse
+  const hoveredBubble = bubbles.find(bubble => {
+    const rect = bubble.getBoundingClientRect();
+    return e.clientX >= rect.left && e.clientX <= rect.right &&
+           e.clientY >= rect.top && e.clientY <= rect.bottom;
+  });
+  
+  // If hovering a vassal planet owned by player
+  if (hoveredBubble && hoveredBubble.vassalTo && hoveredBubble.className.includes('player1')) {
+    e.preventDefault();
+    
+    if (e.deltaY < 0) {
+      // Wheel up: increase minimum
+      hoveredBubble.vassalMinimum += 1;
+    } else if (e.deltaY > 0) {
+      // Wheel down: decrease minimum (minimum of 1)
+      hoveredBubble.vassalMinimum = Math.max(1, hoveredBubble.vassalMinimum - 1);
+    }
   }
 });
 
