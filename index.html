@@ -206,7 +206,8 @@ function createBubble(x, y, size, owner, microBubbles) {
   // Create vassal minimum display element
   const vassalMinDisplay = document.createElement('div');
   vassalMinDisplay.style.fontSize = '0.7em';
-  vassalMinDisplay.style.color = 'rgb(100, 150, 255)';
+  vassalMinDisplay.style.color = 'rgb(100, 200, 255)';
+  vassalMinDisplay.style.textShadow = '0 0 3px rgba(0, 0, 0, 0.8)';
   vassalMinDisplay.style.marginTop = '2px';
   vassalMinDisplay.style.display = 'none';
   countWrapper.appendChild(vassalMinDisplay);
@@ -768,6 +769,33 @@ function drawSquadronLines() {
 function drawArrow() {
   uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
   
+  // Apply hover scaling to enemy planets while dragging
+  if (dragStartBubble && dragEndPos) {
+    bubbles.forEach(bubble => {
+      if (!bubble.className.includes('player1')) {
+        const rect = bubble.getBoundingClientRect();
+        const isHovering = dragEndPos.x >= rect.left && dragEndPos.x <= rect.right &&
+                          dragEndPos.y >= rect.top && dragEndPos.y <= rect.bottom;
+        
+        if (isHovering) {
+          bubble.style.transform = 'scale(1.02)';
+          bubble.style.opacity = '1';
+        } else {
+          bubble.style.transform = '';
+          bubble.style.opacity = '0.8';
+        }
+      }
+    });
+  } else {
+    // Reset all enemy planet transforms when not dragging
+    bubbles.forEach(bubble => {
+      if (!bubble.className.includes('player1')) {
+        bubble.style.transform = '';
+        bubble.style.opacity = '0.8';
+      }
+    });
+  }
+  
   // Update bubble overlays during left click drag
   if (dragStartBubble && !isDraggingRightClick && !isDraggingMiddleClick) {
     bubbles.forEach(bubble => {
@@ -993,6 +1021,7 @@ function gameLoop() {
     drawArrow();
     updateMicroBubbles();
     updateBubbles();
+    checkVictory();
   }
   requestAnimationFrame(gameLoop);
 }
@@ -1190,8 +1219,10 @@ function checkVictory() {
   const player1Bubbles = bubbles.filter(bubble => bubble.className.includes('player1'));
   const player2Bubbles = bubbles.filter(bubble => bubble.className.includes('player2'));
   const player1MicroBubbles = microBubbles.filter(mb => mb.owner === 'player1');
+  const player2MicroBubbles = microBubbles.filter(mb => mb.owner === 'player2');
   
-  if (player2Bubbles.length === 0) {
+  // Player 2 loses only if they have no planets AND no ships in transit
+  if (player2Bubbles.length === 0 && player2MicroBubbles.length === 0) {
     victoryScreen.style.display = 'flex';
     document.getElementById('victoryMessage').textContent = 'Victory!';
   } else if (player1Bubbles.length === 0 && player1MicroBubbles.length === 0) {
