@@ -183,12 +183,10 @@ function createBubble(x, y, size, owner, microBubbles) {
   bubble.microBubbles = microBubbles || Math.floor(Math.random() * 50) + 10;
   bubble.growthRate = Math.floor(400000 / (size * 3));
   bubble.lastGrowth = Date.now();
-  bubble.isReleasing = false;
-  bubble.releasingCount = 0;
-  bubble.lastReleasedShipTime = 0;
   bubble.vassalTo = null; // Track if this planet is a vassal to another
   bubble.lastVassalSend = 0; // Track last time vassal sent a ship
   bubble.vassalMinimum = 1; // Minimum ships to keep before sending to master
+  bubble.lastAttackTime = 0; // Track last time enemy AI attacked from this planet
   
   // Create wrapper for count displays to stack them vertically
   const countWrapper = document.createElement('div');
@@ -236,7 +234,7 @@ function createBubble(x, y, size, owner, microBubbles) {
   bubble.style.fontSize = `${fontSize}px`;
   
   bubble.addEventListener('mousedown', (e) => {
-    if (!bubble.isReleasing && bubble.className.includes('player1')) {
+    if (bubble.className.includes('player1')) {
       if (e.button === 0) {
         dragStartBubble = bubble;
         isDraggingRightClick = false;
@@ -281,9 +279,6 @@ function sendMicroBubbles(from, to, sendAll = false, sendOne = false, specificAm
   from.microBubbles -= microBubblesToSend;
   from.countDisplay.textContent = from.microBubbles;
   
-  from.isReleasing = true;
-  from.releasingCount = microBubblesToSend;
-  
   const fromX = parseInt(from.style.left) + parseInt(from.style.width) / 2;
   const fromY = parseInt(from.style.top) + parseInt(from.style.height) / 2;
   const toX = parseInt(to.style.left) + parseInt(to.style.width) / 2;
@@ -300,16 +295,16 @@ function sendMicroBubbles(from, to, sendAll = false, sendOne = false, specificAm
   const squadronOwner = from.className.includes('player1') ? 'player1' : 'player2';
   const squadronColor = squadronOwner === 'player1' ? '#00a000' : '#c71585';
   
+  // Squadron-specific state (not shared with other squadrons from the same planet)
+  let squadronRemainingToLaunch = microBubblesToSend;
+  let lastLaunchTime = Date.now();
+  
   function releaseNextShip() {
-    if (from.releasingCount > 0) {
+    if (squadronRemainingToLaunch > 0) {
       const currentTime = Date.now();
-      if (currentTime - from.lastReleasedShipTime >= SHIP_RELEASE_DELAY) {
-        from.releasingCount -= 1;
-        from.lastReleasedShipTime = currentTime;
-        
-        if (from.releasingCount === 0) {
-          from.isReleasing = false;
-        }
+      if (currentTime - lastLaunchTime >= SHIP_RELEASE_DELAY) {
+        squadronRemainingToLaunch -= 1;
+        lastLaunchTime = currentTime;
         
         const microBubble = document.createElement('div');
         microBubble.className = 'microBubble';
@@ -330,14 +325,12 @@ function sendMicroBubbles(from, to, sendAll = false, sendOne = false, specificAm
           owner: squadronOwner,
           squadronId: squadronId,
           totalInSquadron: microBubblesToSend,
-          remainingToLaunch: from.releasingCount,
+          remainingToLaunch: squadronRemainingToLaunch,
           actualProgress: 0,
           lastUpdateTime: currentTime
         });
       }
       requestAnimationFrame(releaseNextShip);
-    } else {
-      from.isReleasing = false;
     }
   }
   
@@ -433,7 +426,7 @@ function updateBubbles() {
     }
     
     // Handle vassal behavior
-    if (bubble.vassalTo && bubble.microBubbles > bubble.vassalMinimum && !bubble.isReleasing) {
+    if (bubble.vassalTo && bubble.microBubbles > bubble.vassalMinimum) {
       // Check if vassal is still valid (both planets exist, both owned by player, and master is still player1)
       if (bubbles.includes(bubble.vassalTo) && 
           bubble.className.includes('player1') && 
@@ -456,13 +449,16 @@ function updateBubbles() {
   if (!passiveEnemiesMode) {
     const enemyPlanets = bubbles.filter(b => b.className.includes('player2'));
     const otherPlanets = bubbles.filter(b => !b.className.includes('player2'));
+    const ENEMY_ATTACK_COOLDOWN = 5000; // 5 seconds between attacks per planet
 
     enemyPlanets.forEach(enemyPlanet => {
-      if (!enemyPlanet.isReleasing && enemyPlanet.microBubbles > 0) {
+      const timeSinceLastAttack = now - enemyPlanet.lastAttackTime;
+      if (timeSinceLastAttack >= ENEMY_ATTACK_COOLDOWN && enemyPlanet.microBubbles > 0) {
         const target = otherPlanets.find(p => p.microBubbles < enemyPlanet.microBubbles);
         if (target) {
           const microBubblesToSend = Math.min(enemyPlanet.microBubbles - 1, Math.floor(enemyPlanet.microBubbles / 2));
           sendMicroBubbles(enemyPlanet, target, false, false);
+          enemyPlanet.lastAttackTime = now;
         }
       }
     });
@@ -1257,12 +1253,6 @@ function isOverlapping(x, y, size) {
 }
 
 function initializeGame(restartSameMap = false, passiveEnemies = false) {
-  // Stop all planets from releasing ships
-  bubbles.forEach(bubble => {
-    bubble.isReleasing = false;
-    bubble.releasingCount = 0;
-  });
-  
   // Remove all bubbles
   bubbles.forEach(bubble => {
     if (bubble.parentNode) {
