@@ -1369,6 +1369,17 @@ function updateZappers() {
             // Update planet class if it reaches 0
             if (target.microBubbles === 0) {
               target.className = 'bubble neutral empty';
+
+              // Clear vassal relationships when planet becomes neutral
+              target.vassalTo = null;
+              target.vassalMinimum = 1;
+              // Also clear if this planet was anyone's master
+              bubbles.forEach(b => {
+                if (b.vassalTo === target) {
+                  b.vassalTo = null;
+                  b.vassalMinimum = 1;
+                }
+              });
             }
           }
         }
