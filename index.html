@@ -91,6 +91,33 @@
   .turret.neutral.empty { background: linear-gradient(135deg, #d0d0d0 25%, #f0f0f0 25%, #f0f0f0 50%, #d0d0d0 50%, #d0d0d0 75%, #f0f0f0 75%, #f0f0f0); }
   .turret.player1 { background: linear-gradient(135deg, #00a000 25%, #00d000 25%, #00d000 50%, #00a000 50%, #00a000 75%, #00d000 75%, #00d000); }
   .turret.player2 { background: linear-gradient(135deg, #c71585 25%, #ff69b4 25%, #ff69b4 50%, #c71585 50%, #c71585 75%, #ff69b4 75%, #ff69b4); }
+  .zapper {
+    position: absolute;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+    box-shadow: inset 0 0 20px rgba(255, 255, 255, 0.5), 0 0 15px rgba(255, 255, 255, 0.3);
+    cursor: default;
+    transition: transform 0.3s ease, opacity 0.3s ease, background 1s ease;
+    opacity: 0.8;
+    border: 3px solid rgba(255, 255, 255, 0.4);
+  }
+  .zapper.player1 {
+    cursor: pointer;
+  }
+  .zapper.player1:hover {
+    transform: scale(1.02);
+    opacity: 1;
+  }
+  .zapper.neutral { background: repeating-linear-gradient(45deg, #666 0px, #666 4px, #888 4px, #888 8px); }
+  .zapper.neutral.empty { background: repeating-linear-gradient(45deg, #d0d0d0 0px, #d0d0d0 4px, #f0f0f0 4px, #f0f0f0 8px); }
+  .zapper.player1 { background: repeating-linear-gradient(45deg, #00a000 0px, #00a000 4px, #00d000 4px, #00d000 8px); }
+  .zapper.player2 { background: repeating-linear-gradient(45deg, #c71585 0px, #c71585 4px, #ff69b4 4px, #ff69b4 8px); }
   @keyframes shipSpawn {
     0% {
       transform: scale(0);
@@ -179,6 +206,7 @@
     <p>Press ESC to close this menu</p>
   </div>
   <button id="startGameButton" class="gameButton">Resume Game</button>
+  <button id="pauseRestartButton" class="gameButton">Restart Map</button>
 </div>
 <div id="victoryScreen" style="display: none;">
   <div id="victoryMessage">Victory!</div>
@@ -199,6 +227,7 @@ const startScreen = document.getElementById('startScreen');
 const newGameButton = document.getElementById('newGameButton');
 const restartButton = document.getElementById('restartButton');
 const startGameButton = document.getElementById('startGameButton');
+const pauseRestartButton = document.getElementById('pauseRestartButton');
 
 backgroundCanvas.width = gameCanvas.width = uiCanvas.width = window.innerWidth;
 backgroundCanvas.height = gameCanvas.height = uiCanvas.height = window.innerHeight;
@@ -209,9 +238,11 @@ let dragStartBubble = null;
 let dragEndPos = null;
 let plankton = [];
 let isDraggingRightClick = false;
+let gameSessionId = 0; // Incremented on restart to cancel ongoing ship launches
 let isDraggingMiddleClick = false;
 let gameState = [];
 let turretState = [];
+let zapperState = null; // Store zapper data for map restarts
 let gameStarted = true;
 let startScreenBubbles = [];
 let hoveredBubble = null;
@@ -221,6 +252,7 @@ let shootingStars = [];
 let shootingStarDirection = 0; // Direction for this map (0-3: top, right, bottom, left)
 let laserTurrets = []; // Square defensive structures
 let activeLasers = []; // Currently firing laser beams (for visual effect)
+let zappers = []; // Zapper structures that fire lasers
 let squadronDestroyedCount = new Map(); // Track destroyed ships per squadron
 let squadronOriginalSizes = new Map(); // Track original size of each squadron
 let activeSquadronLaunches = new Map(); // Track active squadron launches: squadronId -> owner
@@ -230,6 +262,8 @@ let lastPirateSpawn = Date.now();
 let nextPirateInterval = 5000 + Math.random() * 25000; // 5s to 30s
 let lastFrameTime = Date.now();
 let lastShootingStarTime = Date.now();
+let mouseX = 0;
+let mouseY = 0;
 
 const SHIP_SPEED = 75; // pixels per second (doubled from 37.5)
 const SHIP_RADIUS = 3; // Radius of the ship (half of its width)
@@ -304,6 +338,88 @@ function createTurret(x, y, size, fireRange = null, microBubbles = null, owner =
   
   document.body.appendChild(turret);
   laserTurrets.push(turret);
+}
+
+function createZapper(x, y, size, microBubbles = null, owner = 'neutral', fireRange = null) {
+  const zapper = document.createElement('div');
+  zapper.style.left = `${x}px`;
+  zapper.style.top = `${y}px`;
+  zapper.style.width = `${size}px`;
+  zapper.style.height = `${size}px`;
+  zapper.style.position = 'absolute';
+  zapper.style.borderRadius = '50%';
+  zapper.microBubbles = microBubbles !== null ? microBubbles : Math.floor(Math.random() * 30); // 0-29 ships
+
+  // Set class with "empty" suffix if zapper has 0 ships
+  zapper.className = `zapper ${owner}` + (zapper.microBubbles === 0 && owner === 'neutral' ? ' empty' : '');
+  zapper.isZapper = true;
+  zapper.lastGrowth = Date.now();
+  zapper.lastAttackTime = 0;
+  zapper.lastZapperFire = 0; // For once per second firing
+
+  // Random fire range: 1x to 2x max planet size (396 to 792 pixels), or use provided value
+  const maxPlanetSize = 99 * 4; // 396
+  zapper.fireRange = fireRange !== null ? fireRange : maxPlanetSize * (1 + Math.random()); // 396 to 792
+
+  // Zapper visual styling (handled by CSS classes)
+  zapper.style.transition = 'background 1s ease';
+
+  // Create count display
+  const countDisplay = document.createElement('div');
+  countDisplay.textContent = zapper.microBubbles;
+  countDisplay.style.position = 'relative';
+  countDisplay.style.zIndex = '1';
+  zapper.appendChild(countDisplay);
+  zapper.countDisplay = countDisplay;
+
+  // Create overlay element for showing required ships
+  const overlay = document.createElement('div');
+  overlay.className = 'zapper-overlay';
+  overlay.style.position = 'absolute';
+  overlay.style.top = '-20px';
+  overlay.style.left = '50%';
+  overlay.style.transform = 'translateX(-50%)';
+  overlay.style.fontSize = '16px';
+  overlay.style.fontWeight = 'bold';
+  overlay.style.color = '#fff';
+  overlay.style.textShadow = '0 0 5px rgba(0, 0, 0, 0.8)';
+  overlay.style.display = 'none';
+  overlay.style.pointerEvents = 'none';
+  overlay.style.zIndex = '10';
+  zapper.appendChild(overlay);
+  zapper.overlay = overlay;
+
+  const fontSize = Math.max(12, Math.min(24, size / 4));
+  zapper.style.fontSize = `${fontSize}px`;
+  zapper.style.color = '#fff';
+  zapper.style.display = 'flex';
+  zapper.style.alignItems = 'center';
+  zapper.style.justifyContent = 'center';
+  zapper.style.fontWeight = 'bold';
+  zapper.style.textShadow = '0 0 5px rgba(0, 0, 0, 0.8)';
+
+  // Add mouse event listeners for sending ships (check ownership when clicked)
+  zapper.addEventListener('mousedown', (e) => {
+    // Only allow dragging if zapper is owned by player at the time of click
+    if (zapper.className.includes('player1')) {
+      if (e.button === 0) {
+        dragStartBubble = zapper;
+        isDraggingRightClick = false;
+        isDraggingMiddleClick = false;
+      } else if (e.button === 2) {
+        dragStartBubble = zapper;
+        isDraggingRightClick = true;
+        isDraggingMiddleClick = false;
+      } else if (e.button === 1) {
+        dragStartBubble = zapper;
+        isDraggingMiddleClick = true;
+        isDraggingRightClick = false;
+      }
+    }
+  });
+
+  document.body.appendChild(zapper);
+  zappers.push(zapper);
 }
 
 function createDebrisParticles(x, y, radius, previousOwner, colorOverride = null, sizeMultiplier = 1.0) {
@@ -727,7 +843,7 @@ function createBubble(x, y, size, owner, microBubbles) {
   bubbles.push(bubble);
 }
 
-function sendMicroBubbles(from, to, sendAll = false, sendOne = false, specificAmount = null) {
+function sendMicroBubbles(from, to, sendAll = false, sendOne = false, specificAmount = null, isPurpleShip = false) {
   let microBubblesToSend;
   if (specificAmount !== null) {
     microBubblesToSend = specificAmount;
@@ -746,9 +862,11 @@ function sendMicroBubbles(from, to, sendAll = false, sendOne = false, specificAm
   
   sendSound.play();
   
-  // Immediately decrement the full amount from the planet
-  from.microBubbles -= microBubblesToSend;
-  from.countDisplay.textContent = from.microBubbles;
+  // Immediately decrement the full amount from the planet (unless it's a purple ship from a black hole)
+  if (!isPurpleShip) {
+    from.microBubbles -= microBubblesToSend;
+    from.countDisplay.textContent = from.microBubbles;
+  }
   
   const fromX = parseInt(from.style.left) + parseInt(from.style.width) / 2;
   const fromY = parseInt(from.style.top) + parseInt(from.style.height) / 2;
@@ -763,14 +881,21 @@ function sendMicroBubbles(from, to, sendAll = false, sendOne = false, specificAm
   const squadronId = `squad_${Date.now()}_${Math.random()}`;
   
   // Store the owner at launch time so it doesn't change if planet is conquered
-  const squadronOwner = from.className.includes('player1') ? 'player1' : 'player2';
-  const squadronColor = squadronOwner === 'player1' ? '#00a000' : '#c71585';
+  const squadronOwner = isPurpleShip ? 'purple' : (from.className.includes('player1') ? 'player1' : 'player2');
+  const squadronColor = isPurpleShip ? '#800080' : (squadronOwner === 'player1' ? '#00a000' : '#c71585');
   
   // Squadron-specific state (not shared with other squadrons from the same planet)
   let squadronRemainingToLaunch = microBubblesToSend;
   let lastLaunchTime = Date.now();
+  const launchSessionId = gameSessionId; // Capture current session ID
   
   function releaseNextShip() {
+    // Cancel this launch if game has been restarted
+    if (launchSessionId !== gameSessionId) {
+      activeSquadronLaunches.delete(squadronId);
+      return;
+    }
+    
     if (squadronRemainingToLaunch > 0) {
       const currentTime = Date.now();
       if (currentTime - lastLaunchTime >= SHIP_RELEASE_DELAY) {
@@ -798,7 +923,8 @@ function sendMicroBubbles(from, to, sendAll = false, sendOne = false, specificAm
           totalInSquadron: microBubblesToSend,
           remainingToLaunch: squadronRemainingToLaunch,
           actualProgress: 0,
-          lastUpdateTime: currentTime
+          lastUpdateTime: currentTime,
+          isPurpleShip: isPurpleShip
         });
       }
       requestAnimationFrame(releaseNextShip);
@@ -864,7 +990,8 @@ function updateMicroBubbles() {
       const destroyedCount = squadronDestroyedCount.get(microBubble.squadronId) || 0;
       squadronDestroyedCount.set(microBubble.squadronId, destroyedCount + 1);
       
-      // Same logic for both turrets and planets
+      
+      // Regular ships: existing logic
       if (microBubble.target.className.includes(microBubble.owner)) {
         // Friendly ship arriving
         const wasEmpty = microBubble.target.microBubbles === 0;
@@ -1134,6 +1261,108 @@ function updateTurrets() {
           microBubbles.splice(shipIndex, 1);
         }
       }
+    }
+  });
+}
+
+function updateZappers() {
+  const now = Date.now();
+  const ZAPPER_FIRE_COOLDOWN = 1000; // 1 second
+
+  zappers.forEach(zapper => {
+    const timeSinceLastFire = now - zapper.lastZapperFire;
+    if (timeSinceLastFire < ZAPPER_FIRE_COOLDOWN) return;
+
+    // Determine targets based on ownership
+    const isNeutral = zapper.className.includes('neutral');
+    const isPlayer = zapper.className.includes('player1');
+    const isEnemy = zapper.className.includes('player2');
+
+    let targets = [];
+
+    if (isNeutral) {
+      // Neutral zappers fire at ALL planets only
+      targets = [...bubbles];
+    } else if (isPlayer || isEnemy) {
+      // Owned zappers only fire at enemy planets
+      const enemyOwner = isPlayer ? 'player2' : 'player1';
+      targets = [
+        ...bubbles.filter(b => b.className.includes(enemyOwner) || b.className.includes('neutral'))
+      ];
+    }
+
+    // Filter targets to only those within fire range
+    const zapperX = parseInt(zapper.style.left) + parseInt(zapper.style.width) / 2;
+    const zapperY = parseInt(zapper.style.top) + parseInt(zapper.style.height) / 2;
+
+    const targetsInRange = targets.filter(target => {
+      const targetX = parseInt(target.style.left) + parseInt(target.style.width) / 2;
+      const targetY = parseInt(target.style.top) + parseInt(target.style.height) / 2;
+      const distance = Math.sqrt((targetX - zapperX) ** 2 + (targetY - zapperY) ** 2);
+      return distance <= zapper.fireRange;
+    });
+
+    // Fire laser at each target in range (color based on zapper owner)
+    if (targetsInRange.length > 0) {
+      zapper.lastZapperFire = now;
+      targetsInRange.forEach(target => {
+        const targetX = parseInt(target.style.left) + parseInt(target.style.width) / 2;
+        const targetY = parseInt(target.style.top) + parseInt(target.style.height) / 2;
+
+        // Determine laser color based on zapper owner
+        let laserColor;
+        if (zapper.className.includes('player1')) {
+          laserColor = 'rgba(0, 255, 0, 0.9)'; // Green laser for player1
+        } else if (zapper.className.includes('player2')) {
+          laserColor = 'rgba(255, 105, 180, 0.9)'; // Pink laser for player2
+        } else {
+          laserColor = 'rgba(180, 180, 180, 0.9)'; // Gray laser for neutral
+        }
+
+        // Add visual laser effect
+        activeLasers.push({
+          x1: zapperX,
+          y1: zapperY,
+          x2: targetX,
+          y2: targetY,
+          color: laserColor,
+          createdTime: now,
+          duration: 200 // Laser visible for 200ms
+        });
+
+        // If target is a ship, destroy it
+        if (target.element && target.element.parentNode && target.element.className.includes('microBubble')) {
+          // Create explosion debris at ship location
+          createShipExplosionDebris(targetX, targetY, target.owner);
+
+          // Destroy the ship
+          if (target.element && target.element.parentNode) {
+            document.body.removeChild(target.element);
+          }
+
+          // Increment destroyed count for this squadron
+          const destroyedCount = squadronDestroyedCount.get(target.squadronId) || 0;
+          squadronDestroyedCount.set(target.squadronId, destroyedCount + 1);
+
+          const shipIndex = microBubbles.indexOf(target);
+          if (shipIndex > -1) {
+            microBubbles.splice(shipIndex, 1);
+          }
+        }
+        // If target is a planet, subtract 1 ship (but not below 0)
+        else if (target.className && target.className.includes('bubble') && !target.element) {
+          // Subtract 1 ship from planet, but not below 0
+          if (target.microBubbles > 0) {
+            target.microBubbles -= 1;
+            target.countDisplay.textContent = target.microBubbles;
+
+            // Update planet class if it reaches 0
+            if (target.microBubbles === 0) {
+              target.className = 'bubble neutral empty';
+            }
+          }
+        }
+      });
     }
   });
 }
@@ -1418,6 +1647,28 @@ function drawTurretRanges() {
     gameCtx.lineWidth = 2;
     gameCtx.stroke();
   });
+  
+  // Draw range circles for zappers (color based on owner)
+  zappers.forEach(zapper => {
+    const zapperX = parseInt(zapper.style.left) + parseInt(zapper.style.width) / 2;
+    const zapperY = parseInt(zapper.style.top) + parseInt(zapper.style.height) / 2;
+
+    // Draw range circle with color based on owner
+    let rangeColor;
+    if (zapper.className.includes('player1')) {
+      rangeColor = 'rgba(0, 255, 0, 0.4)'; // Green range for player1
+    } else if (zapper.className.includes('player2')) {
+      rangeColor = 'rgba(255, 105, 180, 0.4)'; // Pink range for player2
+    } else {
+      rangeColor = 'rgba(128, 128, 128, 0.4)'; // Gray range for neutral
+    }
+
+    gameCtx.beginPath();
+    gameCtx.arc(zapperX, zapperY, zapper.fireRange, 0, Math.PI * 2);
+    gameCtx.strokeStyle = rangeColor;
+    gameCtx.lineWidth = 2;
+    gameCtx.stroke();
+  });
 }
 
 function drawVassalLines() {
@@ -1537,19 +1788,45 @@ function drawPlankton() {
     if (p.y > gameCanvas.height) p.y = 0;
   });
   
-  // Draw rippling corona on capturable planets/turrets during left click drag
+  // Draw rippling corona on capturable planets/turrets during left click drag (only for smart send targets)
   if (dragStartBubble && !isDraggingRightClick && !isDraggingMiddleClick) {
     const time = Date.now();
-    
+
     // Check planets
     bubbles.forEach(bubble => {
       if (bubble === dragStartBubble) return;
-      
-      // Calculate if we have enough to capture this planet
+
+      // Only show corona for enemy/neutral planets (not own planets)
+      if (bubble.className.includes('player1')) {
+        // For own planets, show corona if we're sending 50%
+        const maxWeCanSend = dragStartBubble.microBubbles - 1;
+        const shipsToSend = Math.floor(dragStartBubble.microBubbles / 2);
+        if (shipsToSend > 0 && maxWeCanSend >= shipsToSend) {
+          const bubbleX = parseInt(bubble.style.left) + parseInt(bubble.style.width) / 2;
+          const bubbleY = parseInt(bubble.style.top) + parseInt(bubble.style.height) / 2;
+          const bubbleRadius = parseInt(bubble.style.width) / 2;
+
+          // Create rippling corona effect
+          for (let i = 0; i < 3; i++) {
+            const phase = (time / 1000 + i * 0.4) % 1;
+            const rippleRadius = bubbleRadius + 10 + phase * 20;
+            const opacity = (1 - phase) * 0.3;
+
+            gameCtx.beginPath();
+            gameCtx.arc(bubbleX, bubbleY, rippleRadius, 0, Math.PI * 2);
+            gameCtx.strokeStyle = `rgba(0, 255, 100, ${opacity})`;
+            gameCtx.lineWidth = 3;
+            gameCtx.stroke();
+          }
+        }
+        return;
+      }
+
+      // Calculate if we have enough for smart send
       const targetShips = bubble.microBubbles;
       const maxWeCanSend = dragStartBubble.microBubbles - 1;
       const isNeutral = bubble.className.includes('neutral');
-      
+
       let bonusAmount;
       if (isNeutral) {
         bonusAmount = 1;
@@ -1565,24 +1842,22 @@ function drawPlankton() {
         const totalTimeMs = travelTimeMs + launchDelayMs;
         const shipsGenerated = Math.ceil(totalTimeMs / bubble.growthRate);
         bonusAmount = Math.max(1, shipsGenerated) + 1; // At least 1, +1 extra for enemy planets to account for last-second growth
-      } else {
-        return; // Skip player's own planets
       }
-      
+
       const idealSend = targetShips + bonusAmount;
-      
-      // Only highlight if we have enough
+
+      // Only highlight if we have enough for smart send
       if (maxWeCanSend >= idealSend) {
         const bubbleX = parseInt(bubble.style.left) + parseInt(bubble.style.width) / 2;
         const bubbleY = parseInt(bubble.style.top) + parseInt(bubble.style.height) / 2;
         const bubbleRadius = parseInt(bubble.style.width) / 2;
-        
+
         // Create rippling corona effect
         for (let i = 0; i < 3; i++) {
           const phase = (time / 1000 + i * 0.4) % 1;
           const rippleRadius = bubbleRadius + 10 + phase * 20;
           const opacity = (1 - phase) * 0.3;
-          
+
           gameCtx.beginPath();
           gameCtx.arc(bubbleX, bubbleY, rippleRadius, 0, Math.PI * 2);
           gameCtx.strokeStyle = `rgba(0, 255, 100, ${opacity})`;
@@ -1622,6 +1897,42 @@ function drawPlankton() {
           gameCtx.strokeStyle = `rgba(0, 255, 100, ${opacity})`;
           gameCtx.lineWidth = 3;
           gameCtx.strokeRect(turretX - rippleSize, turretY - rippleSize, rippleSize * 2, rippleSize * 2);
+        }
+      }
+    });
+    
+    // Check zappers
+    zappers.forEach(zapper => {
+      if (zapper === dragStartBubble) return;
+
+      // Skip player's own zappers
+      if (zapper.className.includes('player1')) return;
+
+      // Calculate if we have enough to capture this zapper
+      const targetShips = zapper.microBubbles;
+      const maxWeCanSend = dragStartBubble.microBubbles - 1;
+
+      // Zappers don't grow, always +1 bonus
+      const bonusAmount = 1;
+      const idealSend = targetShips + bonusAmount;
+      
+      // Only highlight if we have enough
+      if (maxWeCanSend >= idealSend) {
+        const zapperX = parseInt(zapper.style.left) + parseInt(zapper.style.width) / 2;
+        const zapperY = parseInt(zapper.style.top) + parseInt(zapper.style.height) / 2;
+        const zapperRadius = parseInt(zapper.style.width) / 2;
+
+        // Create rippling corona effect (circular for zappers, green tint for capturable)
+        for (let i = 0; i < 3; i++) {
+          const phase = (time / 1000 + i * 0.4) % 1;
+          const rippleRadius = zapperRadius + 10 + phase * 20;
+          const opacity = (1 - phase) * 0.3;
+
+          gameCtx.beginPath();
+          gameCtx.arc(zapperX, zapperY, rippleRadius, 0, Math.PI * 2);
+          gameCtx.strokeStyle = `rgba(0, 255, 100, ${opacity})`;
+          gameCtx.lineWidth = 3;
+          gameCtx.stroke();
         }
       }
     });
@@ -1882,8 +2193,16 @@ function drawArrow() {
         const shipsGenerated = Math.ceil(totalTimeMs / bubble.growthRate);
         bonusAmount = Math.max(1, shipsGenerated) + 1; // At least 1, +1 extra for enemy planets to account for last-second growth
       } else {
-        bubble.overlay.style.display = 'none';
-        return; // Skip player's own planets
+        // For own planets, show "50%" overlay if we're sending 50%
+        const maxWeCanSend = dragStartBubble.microBubbles - 1;
+        const shipsToSend = Math.floor(dragStartBubble.microBubbles / 2);
+        if (shipsToSend > 0 && maxWeCanSend >= shipsToSend) {
+          bubble.overlay.textContent = '50%';
+          bubble.overlay.style.display = 'block';
+        } else {
+          bubble.overlay.style.display = 'none';
+        }
+        return; // Skip player's own planets for smart send calculation
       }
       
       const idealSend = targetShips + bonusAmount;
@@ -1929,6 +2248,38 @@ function drawArrow() {
         turret.overlay.style.display = 'none';
       }
     });
+    
+    // Update zapper overlays
+    zappers.forEach(zapper => {
+      if (zapper === dragStartBubble) {
+        zapper.overlay.style.display = 'none';
+        return;
+      }
+
+      // Calculate if we have enough to capture this zapper
+      const targetShips = zapper.microBubbles;
+      const maxWeCanSend = dragStartBubble.microBubbles - 1;
+
+      let bonusAmount;
+      if (zapper.isZapper) {
+        bonusAmount = 1; // Zappers don't grow, always +1
+      } else if (zapper.className.includes('player2')) {
+        bonusAmount = 1; // Enemy zappers don't grow either
+      } else {
+        zapper.overlay.style.display = 'none';
+        return; // Skip player's own zappers
+      }
+
+      const idealSend = targetShips + bonusAmount;
+
+      // Only show count if we have enough
+      if (maxWeCanSend >= idealSend) {
+        zapper.overlay.textContent = idealSend.toString();
+        zapper.overlay.style.display = 'block';
+      } else {
+        zapper.overlay.style.display = 'none';
+      }
+    });
   } else {
     // Hide all overlays when not dragging
     bubbles.forEach(bubble => {
@@ -1936,6 +2287,9 @@ function drawArrow() {
     });
     laserTurrets.forEach(turret => {
       turret.overlay.style.display = 'none';
+    });
+    zappers.forEach(zapper => {
+      zapper.overlay.style.display = 'none';
     });
   }
   
@@ -1954,7 +2308,7 @@ function drawArrow() {
     const endX = dragEndPos.x;
     const endY = dragEndPos.y;
     
-    // Find bubble or turret under mouse cursor
+    // Find bubble, turret, or black hole under mouse cursor
     hoveredBubble = bubbles.find(bubble => {
       const rect = bubble.getBoundingClientRect();
       return dragEndPos.x >= rect.left && dragEndPos.x <= rect.right &&
@@ -1965,6 +2319,15 @@ function drawArrow() {
     if (!hoveredBubble) {
       hoveredBubble = laserTurrets.find(turret => {
         const rect = turret.getBoundingClientRect();
+        return dragEndPos.x >= rect.left && dragEndPos.x <= rect.right &&
+               dragEndPos.y >= rect.top && dragEndPos.y <= rect.bottom;
+      });
+    }
+    
+    // If no turret found, check zappers
+    if (!hoveredBubble) {
+      hoveredBubble = zappers.find(zapper => {
+        const rect = zapper.getBoundingClientRect();
         return dragEndPos.x >= rect.left && dragEndPos.x <= rect.right &&
                dragEndPos.y >= rect.top && dragEndPos.y <= rect.bottom;
       });
@@ -2008,11 +2371,12 @@ function drawArrow() {
           const targetShips = hoveredBubble.microBubbles;
           const isNeutral = hoveredBubble.className.includes('neutral');
           const isTurret = hoveredBubble.isTurret;
+          const isZapper = hoveredBubble.isZapper;
           
           // Calculate bonus based on travel time and growth rate
           let bonusAmount;
-          if (isNeutral || isTurret) {
-            bonusAmount = 1; // Neutrals and turrets don't grow
+          if (isNeutral || isTurret || isZapper) {
+            bonusAmount = 1; // Neutrals, turrets, and black holes don't grow
           } else {
             // Calculate distance and travel time
             const startBubbleX = parseInt(dragStartBubble.style.left) + parseInt(dragStartBubble.style.width) / 2;
@@ -2042,9 +2406,9 @@ function drawArrow() {
             displayFormula = `${targetShips} + ${bonus}`;
             arrowColor = 'rgba(0, 255, 0, 0.7)'; // Green - can capture
           } else {
-            // We don't have enough to capture - send 100% - 1
-            microBubblesToSend = Math.max(0, maxWeCanSend);
-            displayFormula = '100% - 1';
+            // We don't have enough to capture - show "not enough ships"
+            microBubblesToSend = 0;
+            displayFormula = 'not enough ships';
             arrowColor = 'rgba(255, 0, 0, 0.7)'; // Red - can't capture
           }
         }
@@ -2089,11 +2453,12 @@ function drawArrow() {
         const maxWeCanSend = dragStartBubble.microBubbles - 1;
         const isNeutral = hoveredBubble.className.includes('neutral');
         const isTurret = hoveredBubble.isTurret;
+        const isZapper = hoveredBubble.isZapper;
         
         // Calculate bonus based on travel time and growth rate
         let bonusAmount;
-        if (isNeutral || isTurret) {
-          bonusAmount = 1; // Neutrals and turrets don't grow
+        if (isNeutral || isTurret || isZapper) {
+          bonusAmount = 1; // Neutrals, turrets, and black holes don't grow
         } else {
           const startBubbleX = parseInt(dragStartBubble.style.left) + parseInt(dragStartBubble.style.width) / 2;
           const startBubbleY = parseInt(dragStartBubble.style.top) + parseInt(dragStartBubble.style.height) / 2;
@@ -2155,6 +2520,7 @@ function gameLoop() {
     updateDebrisParticles(deltaTime); // Update debris particles
     updatePirateRaids(); // Update pirate raids
     updateTurrets(); // Update turret firing (before drawing so squadron counts are accurate)
+    updateZappers(); // Update zapper firing
     updateMicroBubbles();
     updateBubbles();
     checkVictory();
@@ -2268,10 +2634,24 @@ function isOverlapping(x, y, size) {
     }
   }
   
+  // Check against zappers
+  for (const zapper of zappers) {
+    const zapperX = parseInt(zapper.style.left) + parseInt(zapper.style.width) / 2;
+    const zapperY = parseInt(zapper.style.top) + parseInt(zapper.style.height) / 2;
+    const zapperSize = parseInt(zapper.style.width);
+    const distance = Math.sqrt((x - zapperX) ** 2 + (y - zapperY) ** 2);
+    if (distance < (size + zapperSize) / 2 + minDistance) {
+      return true;
+    }
+  }
+  
   return false;
 }
 
 function initializeGame(restartSameMap = false, passiveEnemies = false) {
+  // Increment session ID to cancel all ongoing ship launches
+  gameSessionId++;
+  
   // Remove all bubbles
   bubbles.forEach(bubble => {
     if (bubble.parentNode) {
@@ -2287,6 +2667,13 @@ function initializeGame(restartSameMap = false, passiveEnemies = false) {
     }
   });
   microBubbles = [];
+  
+  // Also remove any leftover microBubble elements that might not be tracked
+  document.querySelectorAll('.microBubble').forEach(el => {
+    if (el.parentNode) {
+      document.body.removeChild(el);
+    }
+  });
   
   // Remove all squadron label HTML elements
   squadronLabelElements.forEach((element) => {
@@ -2317,6 +2704,14 @@ function initializeGame(restartSameMap = false, passiveEnemies = false) {
     }
   });
   laserTurrets = [];
+  
+  // Remove all zappers
+  zappers.forEach(zapper => {
+    if (zapper.parentNode) {
+      document.body.removeChild(zapper);
+    }
+  });
+  zappers = [];
   
   // Set random shooting star direction for this map
   shootingStarDirection = Math.floor(Math.random() * 4); // 0-3
@@ -2486,6 +2881,49 @@ function initializeGame(restartSameMap = false, passiveEnemies = false) {
              turret.className.includes('player2') ? 'player2' : 'neutral'
     }));
   }
+  
+  // Create or restore zapper
+  if (restartSameMap && zapperState) {
+    // Restore zapper from saved state
+    createZapper(zapperState.x, zapperState.y, zapperState.size, zapperState.microBubbles, zapperState.owner, zapperState.fireRange);
+  } else {
+    // Create zapper on 25% of maps
+    if (Math.random() < 0.25) {
+      let x, y, size;
+      attempts = 0;
+      do {
+        size = 80; // Zappers are slightly larger
+        x = Math.floor(Math.random() * (window.innerWidth - size - 2 * padding)) + padding;
+        y = Math.floor(Math.random() * (window.innerHeight - size - 2 * padding)) + padding;
+        attempts++;
+        if (attempts > maxAttempts) {
+          console.log("Could not place zapper without overlap");
+          break;
+        }
+      } while (isOverlapping(x, y, size));
+
+      if (attempts <= maxAttempts) {
+        const randomShips = Math.floor(Math.random() * 30); // 0-29 ships, like neutral planets/turrets
+        createZapper(x, y, size, randomShips, 'neutral');
+      }
+    }
+
+    // Save zapper state
+    if (zappers.length > 0) {
+      const zapper = zappers[0];
+      zapperState = {
+        x: parseInt(zapper.style.left),
+        y: parseInt(zapper.style.top),
+        size: parseInt(zapper.style.width),
+        microBubbles: zapper.microBubbles,
+        owner: zapper.className.includes('player1') ? 'player1' :
+               zapper.className.includes('player2') ? 'player2' : 'neutral',
+        fireRange: zapper.fireRange
+      };
+    } else {
+      zapperState = null;
+    }
+  }
 }
 
 function checkVictory() {
@@ -2493,6 +2931,8 @@ function checkVictory() {
   const player2Bubbles = bubbles.filter(bubble => bubble.className.includes('player2'));
   const player1Turrets = laserTurrets.filter(turret => turret.className.includes('player1'));
   const player2Turrets = laserTurrets.filter(turret => turret.className.includes('player2'));
+  const player1Zappers = zappers.filter(z => z.className.includes('player1'));
+  const player2Zappers = zappers.filter(z => z.className.includes('player2'));
   const player1MicroBubbles = microBubbles.filter(mb => mb.owner === 'player1');
   const player2MicroBubbles = microBubbles.filter(mb => mb.owner === 'player2');
   
@@ -2500,17 +2940,19 @@ function checkVictory() {
   const player1ShipsLaunching = Array.from(activeSquadronLaunches.values()).includes('player1');
   const player2ShipsLaunching = Array.from(activeSquadronLaunches.values()).includes('player2');
   
-  // Player 2 loses only if they have no planets, no turrets, no ships in transit, AND no ships launching
-  if (player2Bubbles.length === 0 && player2Turrets.length === 0 && player2MicroBubbles.length === 0 && !player2ShipsLaunching) {
+  // Player 2 loses only if they have no planets, no turrets, no zappers, no ships in transit, AND no ships launching
+  if (player2Bubbles.length === 0 && player2Turrets.length === 0 && player2Zappers.length === 0 && player2MicroBubbles.length === 0 && !player2ShipsLaunching) {
     victoryScreen.style.display = 'flex';
     document.getElementById('victoryMessage').textContent = 'Victory!';
-  } else if (player1Bubbles.length === 0 && player1Turrets.length === 0 && player1MicroBubbles.length === 0 && !player1ShipsLaunching) {
+  } else if (player1Bubbles.length === 0 && player1Turrets.length === 0 && player1Zappers.length === 0 && player1MicroBubbles.length === 0 && !player1ShipsLaunching) {
     victoryScreen.style.display = 'flex';
     document.getElementById('victoryMessage').textContent = 'Defeat!';
   }
 }
 
 document.addEventListener('mousemove', (e) => {
+  mouseX = e.clientX;
+  mouseY = e.clientY;
   if (dragStartBubble) {
     dragEndPos = { x: e.clientX, y: e.clientY };
   }
@@ -2518,7 +2960,7 @@ document.addEventListener('mousemove', (e) => {
 
 document.addEventListener('mouseup', (e) => {
   if ((e.button === 0 || e.button === 1 || e.button === 2) && dragStartBubble) {
-    // Check both bubbles and turrets
+    // Check bubbles, turrets, and black holes
     let endBubble = bubbles.find(bubble => {
       const rect = bubble.getBoundingClientRect();
       return e.clientX >= rect.left && e.clientX <= rect.right &&
@@ -2533,11 +2975,20 @@ document.addEventListener('mouseup', (e) => {
                e.clientY >= rect.top && e.clientY <= rect.bottom;
       });
     }
+    
+    // If no turret found, check zappers
+    if (!endBubble) {
+      endBubble = zappers.find(zapper => {
+        const rect = zapper.getBoundingClientRect();
+        return e.clientX >= rect.left && e.clientX <= rect.right &&
+               e.clientY >= rect.top && e.clientY <= rect.bottom;
+      });
+    }
 
     if (endBubble && endBubble !== dragStartBubble) {
       // Calculate the amount to send based on drag type
-      let amountToSend = null;
-      
+      let amountToSend = 0; // Default to not sending
+
       if (isDraggingMiddleClick) {
         // Middle click: check if target is allied
         const isAllied = endBubble.className.includes('player1');
@@ -2581,11 +3032,12 @@ document.addEventListener('mouseup', (e) => {
           const targetShips = endBubble.microBubbles;
           const isNeutral = endBubble.className.includes('neutral');
           const isTurret = endBubble.isTurret;
+          const isZapper = endBubble.isZapper;
           
           // Calculate bonus based on travel time and growth rate
           let bonusAmount;
-          if (isNeutral || isTurret) {
-            bonusAmount = 1; // Neutrals and turrets don't grow
+          if (isNeutral || isTurret || isZapper) {
+            bonusAmount = 1; // Neutrals, turrets, and black holes don't grow
           } else {
             // Calculate distance and travel time
             const startBubbleX = parseInt(dragStartBubble.style.left) + parseInt(dragStartBubble.style.width) / 2;
@@ -2606,16 +3058,20 @@ document.addEventListener('mouseup', (e) => {
             bonusAmount = Math.max(1, shipsGenerated) + 1; // At least 1, +1 extra for enemy planets to account for last-second growth
           }
           
-          if (maxWeCanSend > targetShips) {
-            const idealSend = targetShips + bonusAmount;
-            amountToSend = Math.min(maxWeCanSend, idealSend);
-          } else {
-            amountToSend = Math.max(0, maxWeCanSend);
+          const idealSend = targetShips + bonusAmount;
+
+          // Only send if we have enough ships for the calculated amount
+          if (maxWeCanSend >= idealSend) {
+            amountToSend = idealSend;
           }
+          // If we don't have enough ships, don't send anything
         }
       }
-      
-      sendMicroBubbles(dragStartBubble, endBubble, false, false, amountToSend);
+
+      // Only send if amountToSend > 0
+      if (amountToSend > 0) {
+        sendMicroBubbles(dragStartBubble, endBubble, false, false, amountToSend);
+      }
     }
     
     dragStartBubble = null;
@@ -2666,12 +3122,77 @@ document.addEventListener('keydown', (e) => {
       startScreen.style.display = 'none';
       gameStarted = true;
     }
-  } else if (e.key === ' ') {
-    // Spacebar: restart current map
+  } else if (e.key === ' ' && !e.repeat) { // Spacebar for diaspora
     e.preventDefault();
-    initializeGame(true, passiveEnemiesMode); // true = restart same map, keep passive mode setting
+    // Check if mouse is over a planet
+    const hoveredPlanet = bubbles.find(planet => {
+      const rect = planet.getBoundingClientRect();
+      return mouseX >= rect.left && mouseX <= rect.right &&
+             mouseY >= rect.top && mouseY <= rect.bottom;
+    });
+
+    if (hoveredPlanet && hoveredPlanet.className.includes('player1')) {
+      performDiaspora(hoveredPlanet);
+    }
   }
 });
+
+function performDiaspora(sourcePlanet) {
+  // Find all 0-ship bases that can be captured (not owned by player1)
+  const zeroShipBases = [
+    // Planets with 0 ships
+    ...bubbles.filter(planet =>
+      planet !== sourcePlanet &&
+      !planet.className.includes('player1') &&
+      planet.microBubbles === 0
+    ),
+    // Zappers with 0 ships
+    ...zappers.filter(zapper =>
+      zapper !== sourcePlanet &&
+      !zapper.className.includes('player1') &&
+      zapper.microBubbles === 0
+    ),
+    // Turrets with 0 ships
+    ...laserTurrets.filter(turret =>
+      turret !== sourcePlanet &&
+      !turret.className.includes('player1') &&
+      turret.microBubbles === 0
+    )
+  ];
+
+  if (zeroShipBases.length === 0) return;
+
+  // Sort by priority: bigger planets first, then smaller planets, then zappers, then turrets
+  zeroShipBases.sort((a, b) => {
+    // Determine type priority: planets > zappers > turrets
+    const aType = a.className.includes('bubble') ? 3 : (a.className.includes('zapper') ? 2 : 1);
+    const bType = b.className.includes('bubble') ? 3 : (b.className.includes('zapper') ? 2 : 1);
+
+    if (aType !== bType) {
+      return bType - aType; // Higher type number first
+    }
+
+    // Same type: sort by size (bigger first)
+    const aSize = parseInt(a.style.width);
+    const bSize = parseInt(b.style.width);
+    return bSize - aSize;
+  });
+
+  let shipsRemaining = sourcePlanet.microBubbles - 1; // Keep 1 ship at home
+
+  for (const targetBase of zeroShipBases) {
+    if (shipsRemaining <= 0) break;
+
+    // Send 1 ship to capture this 0-ship base
+    const shipsNeeded = 1;
+
+    if (shipsNeeded <= shipsRemaining) {
+      sendMicroBubbles(sourcePlanet, targetBase, false, false, shipsNeeded);
+      shipsRemaining -= shipsNeeded;
+    }
+  }
+}
+
 
 window.addEventListener('resize', () => {
   backgroundCanvas.width = gameCanvas.width = uiCanvas.width = window.innerWidth;
@@ -2689,6 +3210,12 @@ restartButton.addEventListener('click', () => {
 });
 
 startGameButton.addEventListener('click', () => {
+  startScreen.style.display = 'none';
+  gameStarted = true;
+});
+
+pauseRestartButton.addEventListener('click', () => {
+  initializeGame(true, passiveEnemiesMode); // true = restart same map, keep passive mode setting
   startScreen.style.display = 'none';
   gameStarted = true;
 });
