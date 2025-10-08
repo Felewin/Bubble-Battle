@@ -189,6 +189,13 @@
     font-size: 18px;
     line-height: 1.5;
   }
+
+
+  #menuButtons {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+  }
 </style>
 </head>
 <body>
@@ -200,13 +207,16 @@
 <div id="startScreen" style="display: none;">
   <h1 id="gameTitle">Bubble Battle</h1>
   <div id="controlsExplanation">
-    <p>Controls:</p>
-    <p>Left Click Drag, Middle Click Drag, Right Click Drag</p>
-    <p>Capture enemy (pink) and neutral (blue) bubbles to expand your aquatic empire!</p>
-    <p>Press ESC to close this menu</p>
+    <p><strong>Left Click Drag:</strong> Smart send to capture enemy bases</p>
+    <p><strong>Middle Click Drag:</strong> Establish vassal relationship or send 50%</p>
+    <p><strong>Right Click Drag:</strong> Send 100% - 1 ships</p>
+    <p><strong>Spacebar (over planet):</strong> Diaspora - smart send to all 0-ship bases</p>
+    <p><strong>Mouse Wheel (over vassal):</strong> Adjust vassal minimum ships</p>
   </div>
-  <button id="startGameButton" class="gameButton">Resume Game</button>
-  <button id="pauseRestartButton" class="gameButton">Restart Map</button>
+  <div id="menuButtons">
+    <button id="startGameButton" class="gameButton">Resume Game</button>
+    <button id="pauseRestartButton" class="gameButton">Restart Map</button>
+  </div>
 </div>
 <div id="victoryScreen" style="display: none;">
   <div id="victoryMessage">Victory!</div>
@@ -3209,13 +3219,14 @@ restartButton.addEventListener('click', () => {
   initializeGame(true);
 });
 
+
 startGameButton.addEventListener('click', () => {
   startScreen.style.display = 'none';
   gameStarted = true;
 });
 
 pauseRestartButton.addEventListener('click', () => {
-  initializeGame(true, passiveEnemiesMode); // true = restart same map, keep passive mode setting
+  initializeGame(true); // true = restart same map
   startScreen.style.display = 'none';
   gameStarted = true;
 });
